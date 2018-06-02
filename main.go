@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
 	"image"
-	"image/png"
 	"math/rand"
 	"os"
 
@@ -13,24 +10,40 @@ import (
 
 	"sync"
 
+	"image/png"
+
+	"bytes"
+
+	"github.com/davecgh/go-spew/spew"
 	"github.com/disintegration/gift"
-	termbox "github.com/nsf/termbox-go"
+	"github.com/nsf/termbox-go"
+
+	"encoding/base64"
 )
 
 // parameters
-var windowWidth, windowHeight = 400, 300
+var windowWidth, windowHeight = 250, 100
 
 // sprites
-var src = getImage("imgs/sprite_mario_small.png")
+var src = getImage("imgs/sprite_mario_micro.png")
 
-//var background = getImage("imgs/bg.png")
+var background = getImage("imgs/bg.png")
 
 //var marioJump = image.Rect(1350,0, 1400, 75)
 //var marioRun1 = image.Rect(1534,0, 1584, 75)
 //var marioRun2 = image.Rect(1625,0	, 1675, 75)
+
+/*
+var src = getImage("imgs/sprite_mario_small.png")
+
 var marioStand = image.Rect(50, 0, 80, 40)
 var marioSquat = image.Rect(955, 0, 977, 38)
-var ground = image.Rect(0, 60, 1200, 70)
+var ground = image.Rect(0, 60, 1200, 70) //up to 1200
+*/
+
+var marioStand = image.Rect(39, 0, 56, 30) //50, 0, 80, 40
+var marioSquat = image.Rect(37, 0, 60, 30) //955, 0, 977, 38
+var ground = image.Rect(0, 43, 600, 50)
 
 // Sprite represents a sprite in the game
 type Sprite struct {
@@ -47,14 +60,15 @@ var mario = Sprite{
 	size:     marioStand,
 	Filter:   gift.New(gift.Crop(marioStand)),
 	FilterE:  gift.New(gift.Crop(marioSquat)),
-	Position: image.Pt(50, 240),
+	Position: image.Pt(10, 65),
 	Status:   true,
 }
 
+//1204 x 68
 var terrain = Sprite{
 	size:     ground,
 	Filter:   gift.New(gift.Crop(ground)),
-	Position: image.Pt(0, 280),
+	Position: image.Pt(0, 95),
 	Status:   true,
 }
 
@@ -68,55 +82,44 @@ func main() {
 	// game variables
 	gameOver := false // end of game
 	score := 0        // number of points scored in the game so far
+	var logFps = true
 
-	// poll for keyboard events in another goroutine
-	events := make(chan termbox.Event, 1000)
-	refresher := make(chan bool, 50)
+	//keep track of framerate here
+	fps := map[int]int{}
+
+	//capture keystrokes
+	events := make(chan termbox.Event, 5000)
+
+	refresher := make(chan bool, 5000)
 
 	go func() {
 		for {
 			events <- termbox.PollEvent()
-			refresher <- true
 		}
 	}()
 
-	// block on the start screen the start screen
-	startScreen := getImage("imgs/start.png")
-	printImage(startScreen)
-start:
-	for {
-		switch ev := termbox.PollEvent(); ev.Type {
-		case termbox.EventKey:
-			if ev.Ch == 's' || ev.Ch == 'S' {
-				break start
+	/*
+				// block on the start screen the start screen
+				startScreen := getImage("imgs/start.png")
+				printImage(startScreen)
+
+
+		start:
+			for {
+				switch ev := termbox.PollEvent(); ev.Type {
+				case termbox.EventKey:
+					if ev.Ch == 's' || ev.Ch == 'S' {
+						break start
+					}
+
+					if ev.Ch == 'q' || ev.Ch == 'Q' || ev.Key == termbox.KeyEsc || ev.Key == termbox.KeyCtrlQ || ev.Key == termbox.KeyCtrlC {
+						gameOver = true
+						break start
+					}
+				}
 			}
-
-			if ev.Ch == 'q' || ev.Ch == 'Q' || ev.Key == termbox.KeyEsc || ev.Key == termbox.KeyCtrlQ || ev.Key == termbox.KeyCtrlC {
-				gameOver = true
-				break start
-
-			}
-		}
-	}
-
+	*/
 	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		for !gameOver {
-			select {
-			// create background
-			case <-refresher:
-				dst := image.NewRGBA(image.Rect(0, 0, windowWidth, windowHeight))
-
-				mario.Filter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
-
-				terrain.Filter.DrawAt(dst, src, image.Pt(terrain.Position.X, terrain.Position.Y), gift.OverOperator)
-				printImage(dst)
-			}
-		}
-		wg.Done()
-	}()
 
 	wg.Add(1)
 	go func() {
@@ -125,16 +128,67 @@ start:
 			case ev := <-events:
 				if ev.Type == termbox.EventKey {
 					switch ev.Key {
-					case termbox.KeyEsc, termbox.KeyCtrlQ, termbox.KeyCtrlC:
-						gameOver = true
-					case termbox.KeyArrowRight:
-						mario.Position.X += 10
-					case termbox.KeyArrowLeft:
-						mario.Position.X -= 10
 					case termbox.KeyArrowUp:
 						mario.Position.Y -= 10
+						refresher <- true
+					case termbox.KeyArrowRight:
+						mario.Position.X += 10
+						refresher <- true
+					case termbox.KeyArrowLeft:
+						mario.Position.X -= 10
+						refresher <- true
 					case termbox.KeyArrowDown:
 						mario.Position.Y += 10
+						refresher <- true
+					case termbox.KeyEsc, termbox.KeyCtrlQ, termbox.KeyCtrlC:
+						gameOver = true
+						refresher <- true
+
+					}
+				}
+			}
+		}
+		wg.Done()
+	}()
+
+	//render terrain
+	wg.Add(1)
+	go func() {
+		for !gameOver {
+			time.Sleep(200 * time.Millisecond) //with keystrokes I can get a reliable 6fps with 200ms
+			terrain.Position.X -= 10           //20 shows it as stationary
+
+			refresher <- true
+		}
+		wg.Done()
+	}()
+
+	wg.Add(1)
+	go func() {
+
+		prv := getCurrentTime()
+		fpsloop := 1
+		currentfps := 0
+
+		for !gameOver {
+			select {
+			case <-refresher:
+				dst := image.NewRGBA(image.Rect(0, 0, windowWidth, windowHeight))
+				//gift.New().Draw(dst, background)
+
+				mario.Filter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+
+				terrain.Filter.DrawAt(dst, src, image.Pt(terrain.Position.X, terrain.Position.Y), gift.OverOperator)
+				printImage(dst)
+
+				if logFps {
+					if prv == getCurrentTime() {
+						currentfps++
+					} else {
+						prv = getCurrentTime()
+						fps[fpsloop] = currentfps
+						currentfps = 0
+						fpsloop++
 					}
 				}
 			}
@@ -144,6 +198,11 @@ start:
 
 	wg.Wait()
 	termbox.Close()
+
+	if logFps {
+		spew.Dump(fps)
+	}
+
 	fmt.Println("\nGAME OVER!\nFinal score:", score)
 }
 
@@ -159,11 +218,13 @@ func collide(s1, s2 Sprite) bool {
 }
 
 // this only works for iTerm2!
+// https://stackoverflow.com/questions/29585727/how-to-display-an-image-on-windows-with-go try this out.
 func printImage(img image.Image) {
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
 	imgBase64Str := base64.StdEncoding.EncodeToString(buf.Bytes())
 	fmt.Printf("\x1b[2;0H\x1b]1337;File=inline=1:%s\a", imgBase64Str)
+	//fmt.Printf("\033]1337;File=inline=1:%s\a", imgBase64Str)
 }
 
 func getImage(filePath string) image.Image {
@@ -180,5 +241,5 @@ func getImage(filePath string) image.Image {
 }
 
 func getCurrentTime() int64 {
-	return time.Now().UnixNano() / int64(time.Millisecond)
+	return time.Now().UnixNano() / int64(time.Second)
 }
