@@ -21,6 +21,11 @@ import (
 	"encoding/base64"
 )
 
+const (
+	MARIO_STAND = 0
+	MARIO_JUMP  = 1
+)
+
 // parameters
 var windowWidth, windowHeight = 250, 100
 
@@ -41,8 +46,13 @@ var marioSquat = image.Rect(955, 0, 977, 38)
 var ground = image.Rect(0, 60, 1200, 70) //up to 1200
 */
 
-var marioStand = image.Rect(39, 0, 56, 30) //50, 0, 80, 40
-var marioSquat = image.Rect(37, 0, 60, 30) //955, 0, 977, 38
+var marioStand = image.Rect(39, 0, 56, 30)  //50, 0, 80, 40
+var marioSquat = image.Rect(37, 0, 60, 30)  //955, 0, 977, 38
+var marioJump = image.Rect(514, 0, 534, 30) //955, 0, 977, 38
+var jumpq = make(chan bool, 50)
+
+var marioState = MARIO_STAND
+
 var ground = image.Rect(0, 43, 600, 50)
 
 // Sprite represents a sprite in the game
@@ -59,7 +69,8 @@ type Sprite struct {
 var mario = Sprite{
 	size:     marioStand,
 	Filter:   gift.New(gift.Crop(marioStand)),
-	FilterE:  gift.New(gift.Crop(marioSquat)),
+	FilterA:  gift.New(gift.Crop(marioSquat)),
+	FilterE:  gift.New(gift.Crop(marioJump)),
 	Position: image.Pt(10, 65),
 	Status:   true,
 }
@@ -82,15 +93,12 @@ func main() {
 	// game variables
 	gameOver := false // end of game
 	score := 0        // number of points scored in the game so far
-	var logFps = true
 
-	//keep track of framerate here
-	fps := map[int]int{}
+	var logFps = true    // enable a counter for number of frames rendered in a given second
+	fps := map[int]int{} //keep track of framerate with respect to each second
 
-	//capture keystrokes
-	events := make(chan termbox.Event, 5000)
-
-	refresher := make(chan bool, 5000)
+	events := make(chan termbox.Event, 5000) //capture keystrokes
+	refresher := make(chan bool, 5000)       //for keeping track of when to redraw sprites
 
 	go func() {
 		for {
@@ -99,10 +107,9 @@ func main() {
 	}()
 
 	/*
-				// block on the start screen the start screen
-				startScreen := getImage("imgs/start.png")
-				printImage(startScreen)
-
+		// block on the start screen
+		startScreen := getImage("imgs/start.png")
+		printImage(startScreen)
 
 		start:
 			for {
@@ -129,7 +136,8 @@ func main() {
 				if ev.Type == termbox.EventKey {
 					switch ev.Key {
 					case termbox.KeyArrowUp:
-						mario.Position.Y -= 10
+						//mario.Position.Y -= 10
+						jump()
 						refresher <- true
 					case termbox.KeyArrowRight:
 						mario.Position.X += 10
@@ -176,7 +184,11 @@ func main() {
 				dst := image.NewRGBA(image.Rect(0, 0, windowWidth, windowHeight))
 				//gift.New().Draw(dst, background)
 
-				mario.Filter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				if marioState == MARIO_JUMP {
+					mario.FilterE.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				} else {
+					mario.Filter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				}
 
 				terrain.Filter.DrawAt(dst, src, image.Pt(terrain.Position.X, terrain.Position.Y), gift.OverOperator)
 				printImage(dst)
@@ -242,4 +254,37 @@ func getImage(filePath string) image.Image {
 
 func getCurrentTime() int64 {
 	return time.Now().UnixNano() / int64(time.Second)
+}
+
+//there is probably a less messy way to do this...
+func jump() {
+	go func() {
+		marioState = MARIO_JUMP
+		mario.size = marioJump
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y -= 25
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y -= 20
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y -= 13
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y -= 4
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y += 4
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y += 13
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y += 20
+		jumpq <- true
+		time.Sleep(200 * time.Millisecond)
+		mario.Position.Y += 25
+		jumpq <- true
+		marioState = MARIO_STAND
+	}()
 }
