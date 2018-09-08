@@ -4,21 +4,18 @@ import (
 	"fmt"
 	"image"
 	"math/rand"
-	"os"
-
+	"sync"
 	"time"
 
-	"sync"
-
-	"image/png"
-
 	"bytes"
+	"encoding/base64"
+	"image/png"
+	"os"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/debnath/marigo/sprites"
 	"github.com/disintegration/gift"
 	"github.com/nsf/termbox-go"
-
-	"encoding/base64"
 )
 
 const (
@@ -27,60 +24,25 @@ const (
 	MARIO_SQUAT = 2
 	MARIO_RUN1  = 3
 	MARIO_RUN2  = 4
-
-	TERRAIN_HEIGHT       = 90
-	MARIO_RESTING_HEIGHT = 60
 )
 
-// parameters
+//parameters
 var windowWidth, windowHeight = 250, 100
 
-// sprites
-var src = getImage("imgs/sprite_mario_micro.png")
-var background = getImage("imgs/bg.png")
+//obstacles := map[int][]Sprite {
+//	1: {
+//
+//	},
+//}
 
-//sprites
-var marioStand = image.Rect(39, 0, 56, 30)    //50, 0, 80, 40
-var marioSquat = image.Rect(715, 10, 733, 30) //955, 0, 977, 38
-var marioJump = image.Rect(514, 0, 534, 30)   //955, 0, 977, 38
-var marioRun1 = image.Rect(582, 0, 600, 30)   //955, 0, 977, 38
-var marioRun2 = image.Rect(615, 0, 631, 30)   //955, 0, 977, 38
-var ground = image.Rect(0, 43, 600, 50)
+//source images
+var src = GetImage("imgs/sprite_mario_micro.png")
+var background = GetImage("imgs/bg.png")
 
 //mario state
 var marioState = MARIO_RUN1
 
-// Sprite represents a sprite in the game
-type Sprite struct {
-	size        image.Rectangle
-	StandFilter *gift.GIFT
-	SquatFilter *gift.GIFT
-	JumpFilter  *gift.GIFT
-	Run1Filter  *gift.GIFT
-	Run2Filter  *gift.GIFT
-	Position    image.Point
-	Status      bool
-	Points      int
-}
-
-var mario = Sprite{
-	size:        marioStand,
-	StandFilter: gift.New(gift.Crop(marioStand)),
-	SquatFilter: gift.New(gift.Crop(marioSquat)),
-	JumpFilter:  gift.New(gift.Crop(marioJump)),
-	Run1Filter:  gift.New(gift.Crop(marioRun1)),
-	Run2Filter:  gift.New(gift.Crop(marioRun2)),
-	Position:    image.Pt(10, MARIO_RESTING_HEIGHT),
-	Status:      true,
-}
-
-//1204 x 68
-var terrain = Sprite{
-	size:        ground,
-	StandFilter: gift.New(gift.Crop(ground)),
-	Position:    image.Pt(0, TERRAIN_HEIGHT),
-	Status:      true,
-}
+//var obstacles []Sprite
 
 var events = make(chan termbox.Event, 100)
 var refresher = make(chan bool, 100) //for keeping track of when to redraw sprites
@@ -89,6 +51,8 @@ var gameOver = false // end of game
 var logFps = true    // enable a counter for number of frames rendered in a given second
 
 var fps = map[int]int{} //keep track of framerate with respect to each second
+
+var x_dist = 0
 
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -126,38 +90,16 @@ func main() {
 	fmt.Println("\nGAME OVER!\nFinal score:", score)
 }
 
-//maybe cleaner to use termbox's collide() function
-func collide(s1, s2 Sprite) bool {
-	spriteA := image.Rect(s1.Position.X, s1.Position.Y, s1.Position.X+s1.size.Dx(), s1.Position.Y+s1.size.Dy())
-	spriteB := image.Rect(s2.Position.X, s2.Position.Y, s2.Position.X+s1.size.Dx(), s2.Position.Y+s1.size.Dy())
-	if spriteA.Min.X < spriteB.Max.X && spriteA.Max.X > spriteB.Min.X &&
-		spriteA.Min.Y < spriteB.Max.Y && spriteA.Max.Y > spriteB.Min.Y {
-		return true
-	}
-	return false
-}
-
-// this only works for iTerm2!
-// https://stackoverflow.com/questions/29585727/how-to-display-an-image-on-windows-with-go try this out.
-func printImage(img image.Image) {
-	var buf bytes.Buffer
-	png.Encode(&buf, img)
-	imgBase64Str := base64.StdEncoding.EncodeToString(buf.Bytes())
-	fmt.Printf("\x1b[2;0H\x1b]1337;File=inline=1:%s\a", imgBase64Str)
-}
-
-func getImage(filePath string) image.Image {
-	imgFile, err := os.Open(filePath)
-	defer imgFile.Close()
-	if err != nil {
-		fmt.Println("Cannot read file:", err)
-	}
-	img, _, err := image.Decode(imgFile)
-	if err != nil {
-		fmt.Println("Cannot decode file:", err)
-	}
-	return img
-}
+////maybe cleaner to use termbox's collide() function
+//func collide(s1, s2 sprites.Sprite) bool {
+//	spriteA := image.Rect(s1.Position.X, s1.Position.Y, s1.Position.X+s1.Region.Dx(), s1.Position.Y+s1.Region.Dy())
+//	spriteB := image.Rect(s2.Position.X, s2.Position.Y, s2.Position.X+s1.Region.Dx(), s2.Position.Y+s1.Region.Dy())
+//	if spriteA.Min.X < spriteB.Max.X && spriteA.Max.X > spriteB.Min.X &&
+//		spriteA.Min.Y < spriteB.Max.Y && spriteA.Max.Y > spriteB.Min.Y {
+//		return true
+//	}
+//	return false
+//}
 
 func getCurrentTime() int64 {
 	return time.Now().UnixNano() / int64(time.Second)
@@ -167,32 +109,32 @@ func getCurrentTime() int64 {
 func jump() {
 	marioState = MARIO_JUMP
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y -= 25
+	sprites.Mario.Position.Y -= 25
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y -= 20
+	sprites.Mario.Position.Y -= 20
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y -= 13
+	sprites.Mario.Position.Y -= 13
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y -= 4
+	sprites.Mario.Position.Y -= 4
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y += 4
+	sprites.Mario.Position.Y += 4
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y += 13
+	sprites.Mario.Position.Y += 13
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y += 20
+	sprites.Mario.Position.Y += 20
 	time.Sleep(200 * time.Millisecond)
-	mario.Position.Y += 25
+	sprites.Mario.Position.Y += 25
 	marioState = MARIO_RUN1
 }
 
 //*nix terminals do not have a keyup event, nor does it repeat keystrokes when held down.
 //... so mario can only squat for 300ms on 1 keystroke. no more, no less.
 func squat() {
-	if mario.Position.Y == MARIO_RESTING_HEIGHT {
+	if sprites.Mario.Position.Y == sprites.MARIO_RESTING_HEIGHT {
 		marioState = MARIO_SQUAT //@todo running squats... mario wants to get ripped
-		mario.Position.Y += 10
+		sprites.Mario.Position.Y += 10
 		time.Sleep(300 * time.Millisecond)
-		mario.Position.Y = MARIO_RESTING_HEIGHT
+		sprites.Mario.Position.Y = sprites.MARIO_RESTING_HEIGHT
 		marioState = MARIO_RUN1
 	}
 }
@@ -204,8 +146,8 @@ func pollEvents() {
 }
 
 func startScreen() {
-	startScreen := getImage("imgs/start_micro.png")
-	printImage(startScreen)
+	startScreen := GetImage("imgs/start_micro.png")
+	PrintImage(startScreen)
 start:
 	for { //start screen loop
 		switch ev := termbox.PollEvent(); ev.Type {
@@ -225,7 +167,7 @@ start:
 func scrollTerrain(wg *sync.WaitGroup) {
 	for !gameOver {
 		time.Sleep(200 * time.Millisecond) //with keystrokes I can get a reliable 5fps with 200ms
-		terrain.Position.X -= 10           //20 shows it as stationary
+		sprites.Terrain.Position.X -= 10   //20 shows it as stationary
 
 		refresher <- true
 	}
@@ -240,24 +182,36 @@ func renderSprites(wg *sync.WaitGroup) {
 	for !gameOver {
 		select {
 		case <-refresher:
-			dst := image.NewRGBA(image.Rect(0, 0, windowWidth, windowHeight))
+			dst := image.NewRGBA(image.Rect(-50, -125, windowWidth, windowHeight))
 			//gift.New().Draw(dst, background)
 
 			//loggedMotions = append(loggedMotions, marioState)
 			if marioState == MARIO_JUMP {
-				mario.JumpFilter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				sprites.Mario.FilterJ.DrawAt(dst, src, image.Pt(sprites.Mario.Position.X, sprites.Mario.Position.Y), gift.OverOperator)
 			} else if marioState == MARIO_SQUAT {
-				mario.SquatFilter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				sprites.Mario.FilterC.DrawAt(dst, src, image.Pt(sprites.Mario.Position.X, sprites.Mario.Position.Y), gift.OverOperator)
 			} else if marioState == MARIO_RUN1 {
 				marioState = MARIO_RUN2
-				mario.Run2Filter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				sprites.Mario.FilterR2.DrawAt(dst, src, image.Pt(sprites.Mario.Position.X, sprites.Mario.Position.Y), gift.OverOperator)
 			} else { //if marioState == MARIO_RUN2 {
 				marioState = MARIO_RUN1
-				mario.Run1Filter.DrawAt(dst, src, image.Pt(mario.Position.X, mario.Position.Y), gift.OverOperator)
+				sprites.Mario.FilterR1.DrawAt(dst, src, image.Pt(sprites.Mario.Position.X, sprites.Mario.Position.Y), gift.OverOperator)
 			}
 
-			terrain.StandFilter.DrawAt(dst, src, image.Pt(terrain.Position.X, terrain.Position.Y), gift.OverOperator)
-			printImage(dst)
+			sprites.Terrain.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X, sprites.Terrain.Position.Y), gift.OverOperator)
+
+			sprites.GreenPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+100, sprites.GreenPipe.Position.Y), gift.OverOperator)
+			sprites.GreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+150, sprites.GreenTree.Position.Y), gift.OverOperator)
+			sprites.GreenOrangePipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+200, sprites.GreenOrangePipe.Position.Y), gift.OverOperator)
+			sprites.GreenWhiteTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+250, sprites.GreenWhiteTrees.Position.Y), gift.OverOperator)
+			sprites.BGreenGreenTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+300, sprites.BGreenGreenTrees.Position.Y), gift.OverOperator)
+			sprites.BWhiteBGreenTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+350, sprites.BWhiteBGreenTrees.Position.Y), gift.OverOperator)
+			sprites.BrickWall.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+400, sprites.BrickWall.Position.Y), gift.OverOperator)
+			sprites.GreenOrangeGreenPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+450, sprites.GreenOrangeGreenPipe.Position.Y), gift.OverOperator)
+			sprites.GreenWhiteGreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+500, sprites.GreenWhiteGreenTree.Position.Y), gift.OverOperator)
+			sprites.GreenBWhiteGreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+550, sprites.GreenBWhiteGreenTree.Position.Y), gift.OverOperator)
+
+			PrintImage(dst)
 
 			if logFps {
 				if prv == getCurrentTime() {
@@ -302,4 +256,37 @@ func handleKeystrokes(wg *sync.WaitGroup) {
 		}
 	}
 	wg.Done()
+}
+
+func renderObstacles(wg *sync.WaitGroup) {
+	for !gameOver {
+
+		time.Sleep(1 * time.Second) //with keystrokes I can get a reliable 5fps with 200ms
+		//terrain.Position.X -= 10    //20 shows it as stationary
+
+		refresher <- true
+	}
+	wg.Done()
+}
+
+// this only works for iTerm2!
+// https://stackoverflow.com/questions/29585727/how-to-display-an-image-on-windows-with-go try this out.
+func PrintImage(img image.Image) {
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	imgBase64Str := base64.StdEncoding.EncodeToString(buf.Bytes())
+	fmt.Printf("\x1b[2;0H\x1b]1337;File=inline=1:%s\a", imgBase64Str)
+}
+
+func GetImage(filePath string) image.Image {
+	imgFile, err := os.Open(filePath)
+	defer imgFile.Close()
+	if err != nil {
+		fmt.Println("Cannot read file:", err)
+	}
+	img, _, err := image.Decode(imgFile)
+	if err != nil {
+		fmt.Println("Cannot decode file:", err)
+	}
+	return img
 }
