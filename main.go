@@ -27,32 +27,38 @@ const (
 )
 
 //parameters
-var windowWidth, windowHeight = 250, 100
-
-//obstacles := map[int][]Sprite {
-//	1: {
-//
-//	},
-//}
+var windowWidth, windowHeight = 250, 100 //keep low as Iterm2 hack is not designed for animations... bigger resolutions = lower fps
 
 //source images
 var src = GetImage("imgs/sprite_mario_micro.png")
-var background = GetImage("imgs/bg.png")
+
+//var background = GetImage("imgs/bg.png")
 
 //mario state
 var marioState = MARIO_RUN1
 
 //var obstacles []Sprite
 
-var events = make(chan termbox.Event, 100)
-var refresher = make(chan bool, 100) //for keeping track of when to redraw sprites
+var events = make(chan termbox.Event, 500) //Keep track of keyboard events
+var refresher = make(chan bool, 500)       //for keeping track of when to redraw sprites
+var gameOver = false                       // end of game
+var logFps = true                          // enable a counter for number of frames rendered in a given second
+var totalfps = 0                           //total number of frames rendered
+var fps = map[int]int{}                    //keep track of framerate with respect to each second
 
-var gameOver = false // end of game
-var logFps = true    // enable a counter for number of frames rendered in a given second
-
-var fps = map[int]int{} //keep track of framerate with respect to each second
-
-var x_dist = 0
+//roughly the obstacles are more more difficult the further in it goes.
+var obstacles = []sprites.Sprite{
+	sprites.GreenPipe,
+	sprites.GreenTree,
+	sprites.GOPipe,   //GreenOrange Pipe
+	sprites.GWTrees,  //Green White Tree
+	sprites.BGGTrees, //Big Green and small Green tree, etc
+	sprites.BWBGTrees,
+	sprites.BrickWall,
+	sprites.GOGPipe,
+	sprites.GWGTree,
+	sprites.GBWGTree,
+}
 
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -64,12 +70,11 @@ func main() {
 	// game variables
 	score := 0 // number of points scored in the game so far
 
-	//var loggedMotions []int
-
-	go pollEvents() //poll for termbox events
-	startScreen()   //block on start screen until user presses 's' to start or 'q' to quit
-
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go pollEvents(&wg) //poll for termbox events
+	startScreen()      //block on start screen until user presses 's' to start or 'q' to quit
+
 	wg.Add(1)
 	go handleKeystrokes(&wg)
 
@@ -83,23 +88,23 @@ func main() {
 	termbox.Close()
 
 	if logFps {
+		fmt.Println(fmt.Sprintf("Ran for %d seconds with an average framerate of %dfps", len(fps), totalfps/len(fps)))
 		spew.Dump(fps)
-		//spew.Dump(loggedMotions)
 	}
 
 	fmt.Println("\nGAME OVER!\nFinal score:", score)
 }
 
-////maybe cleaner to use termbox's collide() function
-//func collide(s1, s2 sprites.Sprite) bool {
-//	spriteA := image.Rect(s1.Position.X, s1.Position.Y, s1.Position.X+s1.Region.Dx(), s1.Position.Y+s1.Region.Dy())
-//	spriteB := image.Rect(s2.Position.X, s2.Position.Y, s2.Position.X+s1.Region.Dx(), s2.Position.Y+s1.Region.Dy())
-//	if spriteA.Min.X < spriteB.Max.X && spriteA.Max.X > spriteB.Min.X &&
-//		spriteA.Min.Y < spriteB.Max.Y && spriteA.Max.Y > spriteB.Min.Y {
-//		return true
-//	}
-//	return false
-//}
+//maybe cleaner to use termbox's collide() function
+func collide(s1, s2 sprites.Sprite) bool {
+	spriteA := image.Rect(s1.Position.X, s1.Position.Y, s1.Position.X+s1.Region.Dx(), s1.Position.Y+s1.Region.Dy())
+	spriteB := image.Rect(s2.Position.X, s2.Position.Y, s2.Position.X+s1.Region.Dx(), s2.Position.Y+s1.Region.Dy())
+	if spriteA.Min.X < spriteB.Max.X && spriteA.Max.X > spriteB.Min.X &&
+		spriteA.Min.Y < spriteB.Max.Y && spriteA.Max.Y > spriteB.Min.Y {
+		return true
+	}
+	return false
+}
 
 func getCurrentTime() int64 {
 	return time.Now().UnixNano() / int64(time.Second)
@@ -128,8 +133,8 @@ func jump() {
 }
 
 //*nix terminals do not have a keyup event, nor does it repeat keystrokes when held down.
-//... so mario can only squat for 300ms on 1 keystroke. no more, no less.
-func squat() {
+//... so mario can only crouch for 300ms on 1 keystroke. no more, no less.
+func crouch() {
 	if sprites.Mario.Position.Y == sprites.MARIO_RESTING_HEIGHT {
 		marioState = MARIO_SQUAT //@todo running squats... mario wants to get ripped
 		sprites.Mario.Position.Y += 10
@@ -139,10 +144,12 @@ func squat() {
 	}
 }
 
-func pollEvents() {
-	for {
+func pollEvents(wg *sync.WaitGroup) {
+	for !gameOver {
 		events <- termbox.PollEvent()
 	}
+
+	wg.Done()
 }
 
 func startScreen() {
@@ -166,8 +173,14 @@ start:
 
 func scrollTerrain(wg *sync.WaitGroup) {
 	for !gameOver {
-		time.Sleep(200 * time.Millisecond) //with keystrokes I can get a reliable 5fps with 200ms
-		sprites.Terrain.Position.X -= 10   //20 shows it as stationary
+		time.Sleep(100 * time.Millisecond) //with keystrokes I can get a reliable 5fps with 200ms
+
+		//start obstacle sprites from X=300
+		if sprites.Terrain.Position.X < -620 {
+			sprites.Terrain.Position.X = -50
+		}
+
+		sprites.Terrain.Position.X -= 10
 
 		refresher <- true
 	}
@@ -181,6 +194,7 @@ func renderSprites(wg *sync.WaitGroup) {
 
 	for !gameOver {
 		select {
+
 		case <-refresher:
 			dst := image.NewRGBA(image.Rect(-50, -125, windowWidth, windowHeight))
 			//gift.New().Draw(dst, background)
@@ -200,16 +214,24 @@ func renderSprites(wg *sync.WaitGroup) {
 
 			sprites.Terrain.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X, sprites.Terrain.Position.Y), gift.OverOperator)
 
-			sprites.GreenPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+100, sprites.GreenPipe.Position.Y), gift.OverOperator)
-			sprites.GreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+150, sprites.GreenTree.Position.Y), gift.OverOperator)
-			sprites.GreenOrangePipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+200, sprites.GreenOrangePipe.Position.Y), gift.OverOperator)
-			sprites.GreenWhiteTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+250, sprites.GreenWhiteTrees.Position.Y), gift.OverOperator)
-			sprites.BGreenGreenTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+300, sprites.BGreenGreenTrees.Position.Y), gift.OverOperator)
-			sprites.BWhiteBGreenTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+350, sprites.BWhiteBGreenTrees.Position.Y), gift.OverOperator)
-			sprites.BrickWall.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+400, sprites.BrickWall.Position.Y), gift.OverOperator)
-			sprites.GreenOrangeGreenPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+450, sprites.GreenOrangeGreenPipe.Position.Y), gift.OverOperator)
-			sprites.GreenWhiteGreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+500, sprites.GreenWhiteGreenTree.Position.Y), gift.OverOperator)
-			sprites.GreenBWhiteGreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+550, sprites.GreenBWhiteGreenTree.Position.Y), gift.OverOperator)
+			//start obstacle sprites from X=300
+
+			//sprites.GreenPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+100, sprites.GreenPipe.Position.Y), gift.OverOperator)
+			//sprites.GreenTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+150, sprites.GreenTree.Position.Y), gift.OverOperator)
+			//sprites.GOPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+200, sprites.GOPipe.Position.Y), gift.OverOperator)
+			//sprites.GWTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+250, sprites.GWTrees.Position.Y), gift.OverOperator)
+			//sprites.BGGTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+300, sprites.BGGTrees.Position.Y), gift.OverOperator)
+			//sprites.BWBGTrees.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+350, sprites.BWBGTrees.Position.Y), gift.OverOperator)
+			//sprites.BrickWall.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+400, sprites.BrickWall.Position.Y), gift.OverOperator)
+			//sprites.GOGPipe.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+450, sprites.GOGPipe.Position.Y), gift.OverOperator)
+			//sprites.GWGTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+500, sprites.GWGTree.Position.Y), gift.OverOperator)
+			//sprites.GBWGTree.FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+550, sprites.GBWGTree.Position.Y), gift.OverOperator)
+
+			for i := 0; i < len(obstacles); i++ {
+				if obstacles[i].Status {
+					obstacles[i].FilterS.DrawAt(dst, src, image.Pt(sprites.Terrain.Position.X+(obstacles[i].Position.X), obstacles[i].Position.Y), gift.OverOperator)
+				}
+			}
 
 			PrintImage(dst)
 
@@ -219,6 +241,7 @@ func renderSprites(wg *sync.WaitGroup) {
 				} else {
 					prv = getCurrentTime()
 					fps[fpsloop] = currentfps
+					totalfps = totalfps + currentfps
 					currentfps = 0
 					fpsloop++
 				}
@@ -226,7 +249,6 @@ func renderSprites(wg *sync.WaitGroup) {
 		}
 	}
 	wg.Done()
-
 }
 
 func handleKeystrokes(wg *sync.WaitGroup) {
@@ -240,13 +262,12 @@ func handleKeystrokes(wg *sync.WaitGroup) {
 						go jump()
 						refresher <- true
 					}
-				case termbox.KeyArrowDown:
-					if marioState != MARIO_JUMP {
-						go squat()
-						refresher <- true
-					}
-					//mario.Position.Y += 10
-					//refresher <- true
+				//disabling crouch ability as *nix terminals do not have a KEYUP event, nor does holding a key down send events fast enough.
+				//case termbox.KeyArrowDown:
+				//	if marioState != MARIO_JUMP {
+				//		go crouch()
+				//		refresher <- true
+				//	}
 				case termbox.KeyEsc, termbox.KeyCtrlQ, termbox.KeyCtrlC:
 					gameOver = true
 					refresher <- true
@@ -254,17 +275,6 @@ func handleKeystrokes(wg *sync.WaitGroup) {
 				}
 			}
 		}
-	}
-	wg.Done()
-}
-
-func renderObstacles(wg *sync.WaitGroup) {
-	for !gameOver {
-
-		time.Sleep(1 * time.Second) //with keystrokes I can get a reliable 5fps with 200ms
-		//terrain.Position.X -= 10    //20 shows it as stationary
-
-		refresher <- true
 	}
 	wg.Done()
 }
